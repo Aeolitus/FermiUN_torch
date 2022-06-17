@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[75]:
+# In[92]:
 
 
 # Import Statements
@@ -17,12 +17,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-# In[76]:
+# In[93]:
 
 
 # Lets define some parameters
 IMAGE_FOLDER = ['..\TestData', '..\TestData2']
 LOG_FILE = '..\log.txt'
+HISTORY_FILE = '..\loss_history.npy'
+
 IMAGE_SIZE = 444
 MASK_RADIUS = 120
 TEST_SPLIT = .15
@@ -31,16 +33,17 @@ BATCH_SIZE = 32
 EPOCHS = 1000
 LEARNING_RATE = 5e-6
 FLAG_NOTEBOOK = False
+CPU_IN_NOTEBOOK = True
 
 
-# In[77]:
+# In[94]:
 
 
 logging.basicConfig(filename=LOG_FILE, encoding='utf-8', filemode='w', level=logging.DEBUG, format='%(asctime)s > %(levelname)s : %(message)s')
 logging.info('FermiUN started!')
 
 
-# In[78]:
+# In[95]:
 
 
 # Lets write our custom datasets, dataloaders and related functions first
@@ -78,6 +81,7 @@ class FermiUNDataset(Dataset):
             _target = self.target_transform(_target)
         return _masked, _target
 
+
 FermiUNData = FermiUNDataset(IMAGE_FOLDER)
 
 # Split into training, validation, test
@@ -85,11 +89,8 @@ dataset_size = len(FermiUNData)
 dataset_indices = list(range(dataset_size))
 np.random.seed(42)
 np.random.shuffle(dataset_indices)
-first_split, second_split = int(np.floor(VALIDATION_SPLIT*dataset_size)), \
-                            dataset_size-int(np.floor(TEST_SPLIT*dataset_size))
-validation_indices, train_indices, test_indices = dataset_indices[:first_split], \
-                                                  dataset_indices[first_split:second_split], \
-                                                  dataset_indices[second_split:]
+first_split, second_split = int(np.floor(VALIDATION_SPLIT*dataset_size)),                             dataset_size-int(np.floor(TEST_SPLIT*dataset_size))
+validation_indices, train_indices, test_indices = dataset_indices[:first_split],                                                   dataset_indices[first_split:second_split],                                                   dataset_indices[second_split:]
 
 FermiUNLoaderTraining = DataLoader(FermiUNData, batch_size=BATCH_SIZE,
                                    sampler=SubsetRandomSampler(train_indices))
@@ -99,7 +100,7 @@ FermiUNLoaderTesting = DataLoader(FermiUNData, batch_size=BATCH_SIZE,
                                   sampler=SubsetRandomSampler(test_indices))
 
 
-# In[79]:
+# In[96]:
 
 
 # Test our Dataloader
@@ -107,18 +108,17 @@ if FLAG_NOTEBOOK:
     figure = plt.figure(figsize=(16,10))
     test_image,target_image = next(iter(FermiUNLoaderTesting))
     for i in range(1,5):
-        figure.add_subplot(2,4,i)
+        figure.add_subplot(2, 4, i)
         plt.title(f'Test Image {i}')
         plt.axis('off')
-        plt.imshow(test_image[i,0,:,:], cmap="gray")
-        figure.add_subplot(2,4,i+4)
-        plt.title(f'Target Image {i}')
-        plt.axis('off')
-        plt.imshow(target_image[i,0,:,:], cmap="gray")
+        plt.imshow(test_image[i, 0, :, :], cmap="gray")
+        figure.add_subplot(2, 4, i+4)
+        plt.title(f'Target Image {i}')#    plt.axis('off')
+        plt.imshow(target_image[i, 0, :, :], cmap="gray")
     plt.show()
 
 
-# In[80]:
+# In[97]:
 
 
 # Do we have a gpu?
@@ -126,15 +126,15 @@ if FLAG_NOTEBOOK:
     device = "cpu"
     print(f"Using {device} device!")
 else:
-    if torch.cuda.is_available():
-        device = "cuda"
-        logging.info("Using cuda device!")
-    else:
+    if not torch.cuda.is_available() or (FLAG_NOTEBOOK and CPU_IN_NOTEBOOK):
         device = "cpu"
         logging.warning("Cuda device unavailable, using cpu!")
+    else:
+        device = "cuda"
+        logging.info("Using cuda device!")
 
 
-# In[81]:
+# In[98]:
 
 
 # Lets define our model
@@ -147,6 +147,7 @@ class EncoderBlock(nn.Module):
 
     def forward(self, x):
         return self.relu(self.conv2(self.relu(self.conv1(x))))
+
 
 class Encoder(nn.Module):
     def __init__(self, channels=(1, 16, 32, 64, 128, 256)):
@@ -163,6 +164,7 @@ class Encoder(nn.Module):
             outputs.append(x)
             x = self.MaxPool(x)
         return outputs
+
 
 class Decoder(nn.Module):
     def __init__(self, channels=(256, 128, 64, 32, 16)):
@@ -189,6 +191,7 @@ class Decoder(nn.Module):
             x = self.DecoderBlocks[i](x)
         return x
 
+
 class Head(nn.Module):
     def __init__(self, height, width, channels):
         super().__init__()
@@ -200,6 +203,7 @@ class Head(nn.Module):
         x = self.head(x)
         x = CenterCrop([self.height, self.width])(x)
         return x
+
 
 class Unet(nn.Module):
     def __init__(self, encoder_channels=(1, 16, 32, 64, 128, 256), decoder_channels=(256, 128, 64, 32, 16)):
@@ -215,12 +219,13 @@ class Unet(nn.Module):
         out = self.head(decoder_features)
         return out
 
+
 model = Unet().to(device)
 if FLAG_NOTEBOOK:
     print(model)
 
 
-# In[82]:
+# In[99]:
 
 
 # Test the encoder and decoder definitions
@@ -238,37 +243,44 @@ if FLAG_NOTEBOOK:
     print(y.shape)
 
 
-# In[83]:
+# In[100]:
 
 
 # Training Loops
 def training_loop(dataloader, model, loss_function, optimizer):
+    avg_loss, batches = 0, 0
     for batch, (X,y) in enumerate(dataloader):
-        X,y = X.float().to(device),y.float().to(device)
+        X, y = X.float().to(device), y.float().to(device)
         prediction = model(X)
-        loss = loss_function(prediction,y)
+        loss = loss_function(prediction, y)
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
-        if batch%100 == 0:
-            loss,current = loss.item(), batch*len(X)
+        if batch % 100 == 0:
+            loss, current = loss.item(), batch*len(X)
             if FLAG_NOTEBOOK:
                 print(f"Loss: {loss:>7f} [{current:>5d}/{len(dataloader.dataset):>5d}]")
             else:
                 logging.info(f"Loss: {loss:>7f} [{current:>5d}/{len(dataloader.dataset):>5d}]")
+        avg_loss += loss
+        batches +=1
+    return avg_loss/batches
+
+
 def no_inference_loop(dataloader, model, loss_function):
     num_batches = len(dataloader)
     loss = 0
 
     with torch.no_grad():
-        for X,y in dataloader:
-            X,y = X.float().to(device),y.float().to(device)
+        for X, y in dataloader:
+            X, y = X.float().to(device), y.float().to(device)
             prediction = model(X)
-            loss += loss_function(prediction,y).item()
+            loss += loss_function(prediction, y).item()
         loss /= num_batches
     return loss
+
 
 def test_loop(dataloader, model, loss_function):
     loss = no_inference_loop(dataloader, model, loss_function)
@@ -276,6 +288,8 @@ def test_loop(dataloader, model, loss_function):
         print(f"Average loss in test dataset: {loss:>8f}")
     else:
         logging.info(f"Average loss in test dataset: {loss:>8f}")
+    return loss
+
 
 def validation_loop(dataloader, model, loss_function):
     loss = no_inference_loop(dataloader, model, loss_function)
@@ -283,27 +297,34 @@ def validation_loop(dataloader, model, loss_function):
         print(f"Validation loss: {loss:>7f}")
     else:
         logging.info(f"Validation loss: {loss:>7f}")
+    return loss
 
 
-# In[84]:
+# In[101]:
 
 
 # Train the network
 torch.cuda.empty_cache()
 loss_function = nn.MSELoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
+
+loss_history = np.zeros((EPOCHS,3,))
+
 for epoch in range(EPOCHS):
     if FLAG_NOTEBOOK:
         print(f"Epoch {epoch+1}\n--------------------------")
     else:
         logging.info(f"Epoch {epoch+1}\n--------------------------")
-    training_loop(FermiUNLoaderTraining, model, loss_function, optimizer)
-    validation_loop(FermiUNLoaderValidation, model, loss_function)
+    loss_history[epoch,0] = epoch+1
+    loss_history[epoch,1] = training_loop(FermiUNLoaderTraining, model, loss_function, optimizer)
+    loss_history[epoch,2] = validation_loop(FermiUNLoaderValidation, model, loss_function)
+    np.save(HISTORY_FILE, loss_history)
+
 test_loop(FermiUNLoaderTesting, model, loss_function)
 logging.info(f"Training complete.")
 
 
-# In[ ]:
+# In[102]:
 
 
 
