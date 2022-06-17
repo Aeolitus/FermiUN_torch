@@ -24,6 +24,7 @@ import numpy as np
 IMAGE_FOLDER = ['..\TestData', '..\TestData2']
 LOG_FILE = '..\log.txt'
 HISTORY_FILE = '..\loss_history.npy'
+MODEL_FOLDER = '..\Models'
 
 IMAGE_SIZE = 444
 MASK_RADIUS = 120
@@ -32,7 +33,7 @@ VALIDATION_SPLIT = .15
 BATCH_SIZE = 32
 EPOCHS = 1000
 LEARNING_RATE = 5e-6
-FLAG_NOTEBOOK = False
+FLAG_NOTEBOOK = True
 CPU_IN_NOTEBOOK = True
 
 
@@ -320,7 +321,12 @@ for epoch in range(EPOCHS):
     loss_history[epoch,2] = validation_loop(FermiUNLoaderValidation, model, loss_function)
     np.save(HISTORY_FILE, loss_history)
 
+    if epoch > 1 and epoch % 20 == 0:
+        torch.save(model, os.path.join(MODEL_FOLDER, f"Model_e{epoch}.pt"))
+
 test_loop(FermiUNLoaderTesting, model, loss_function)
+if EPOCHS % 20 > 0:
+    torch.save(model, os.path.join(MODEL_FOLDER, f"FinishedModel.pt"))
 logging.info(f"Training complete.")
 
 
