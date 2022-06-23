@@ -1,10 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[92]:
-
-
-# Import Statements
 import os
 import logging
 import torch
@@ -19,10 +15,8 @@ import wandb
 import argparse
 import math
 
-# In[93]:
-# Arguments Parsing
-parser =argparse.ArgumentParser("TorchUnet")
 
+parser = argparse.ArgumentParser("TorchUnet")
 parser.add_argument("runname", type=str, default="")
 parser.add_argument("learningrate", type=float, default=0.000005)
 parser.add_argument("batchsize", type=int, default=61)
@@ -31,41 +25,35 @@ parser.add_argument("oldmodelfilename", type=str, default='')
 parser.add_argument("upperlr", type=float, default=0)
 args = parser.parse_args()
 
-# Lets define some parameters
-IMAGE_FOLDER = ['../FermiUNData/images_0', '../FermiUNData/images_1', \
-     '../FermiUNData/images_2', '../FermiUNData/images_3', \
-    '../FermiUNData/images_4']
+# Lets define some constants and paths
+IMAGE_FOLDER = ['../FermiUNData/images_0', '../FermiUNData/images_1',
+                '../FermiUNData/images_2', '../FermiUNData/images_3',
+                '../FermiUNData/images_4']
 LOG_FILE = '../log_' + args.runname + '.txt'
 HISTORY_FILE = '../loss_history_' + args.runname + '.npy'
 MODEL_FOLDER = '../Models/' + args.runname
-os.makedirs(MODEL_FOLDER, exist_ok=True)
-
 IMAGE_SIZE = 444
 MASK_RADIUS = 120
-TEST_SPLIT = .15
+TEST_SPLIT = .1
 VALIDATION_SPLIT = .15
-#BATCH_SIZE = 32
 BATCH_SIZE = args.batchsize
 EPOCHS = 1000
-#LEARNING_RATE = 5e-6
 LEARNING_RATE = args.learningrate
 FLAG_NOTEBOOK = False
 CPU_IN_NOTEBOOK = True
 epoch = 0
 
-# In[94]:
-
-
-logging.basicConfig(filename=LOG_FILE, encoding='utf-8', filemode='w', level=logging.WARNING, format='%(asctime)s > %(levelname)s : %(message)s')
+# Set up folders and logging
+os.makedirs(MODEL_FOLDER, exist_ok=True)
+logging.basicConfig(filename=LOG_FILE, encoding='utf-8', filemode='w', level=logging.info, format='%(asctime)s > %(levelname)s : %(message)s')
 logging.info('FermiUN started!')
 wandb.init(project="FermiUN Torch Testing")
 wandb.config = {
-    "learning_rate" : LEARNING_RATE,
-    "epochs" : EPOCHS,
-    "batch_size" : BATCH_SIZE
+    "learning_rate": LEARNING_RATE,
+    "epochs": EPOCHS,
+    "batch_size": BATCH_SIZE
 }
 wandb.run.name = args.runname
-# In[95]:
 
 
 # Lets write our custom datasets, dataloaders and related functions first
@@ -80,7 +68,7 @@ class FermiUNDataset(Dataset):
         self.transform = transform
         self.target_transform = target_transform
 
-        # Make the mask for our images
+        # Make the mask for our images - circular with radius MASK_RADIUS
         _scale = np.arange(IMAGE_SIZE)
         _mask = np.zeros((IMAGE_SIZE, IMAGE_SIZE))
         _mask[(_scale[np.newaxis, :] - (IMAGE_SIZE - 1) / 2) ** 2
@@ -104,6 +92,7 @@ class FermiUNDataset(Dataset):
         return _masked, _target
 
 
+# The dataset we draw all images from
 FermiUNData = FermiUNDataset(IMAGE_FOLDER)
 
 # Split into training, validation, test
@@ -111,8 +100,11 @@ dataset_size = len(FermiUNData)
 dataset_indices = list(range(dataset_size))
 np.random.seed(42)
 np.random.shuffle(dataset_indices)
-first_split, second_split = int(np.floor(VALIDATION_SPLIT*dataset_size)),                             dataset_size-int(np.floor(TEST_SPLIT*dataset_size))
-validation_indices, train_indices, test_indices = dataset_indices[:first_split],                                                   dataset_indices[first_split:second_split],                                                   dataset_indices[second_split:]
+first_split, second_split = (int(np.floor(VALIDATION_SPLIT*dataset_size)),
+                            dataset_size-int(np.floor(TEST_SPLIT*dataset_size)))
+validation_indices, train_indices, test_indices = (dataset_indices[:first_split],
+                                                  dataset_indices[first_split:second_split],
+                                                  dataset_indices[second_split:])
 
 FermiUNLoaderTraining = DataLoader(FermiUNData, batch_size=BATCH_SIZE,
                                    sampler=SubsetRandomSampler(train_indices), num_workers=4, pin_memory=True)
@@ -121,27 +113,20 @@ FermiUNLoaderValidation = DataLoader(FermiUNData, batch_size=BATCH_SIZE,
 FermiUNLoaderTesting = DataLoader(FermiUNData, batch_size=BATCH_SIZE,
                                   sampler=SubsetRandomSampler(test_indices), num_workers=4, pin_memory=True)
 
-
-# In[96]:
-
-
 # Test our Dataloader
 if FLAG_NOTEBOOK:
-    figure = plt.figure(figsize=(16,10))
-    test_image,target_image = next(iter(FermiUNLoaderTesting))
-    for i in range(1,5):
+    figure = plt.figure(figsize=(16, 10))
+    test_image, target_image = next(iter(FermiUNLoaderTesting))
+    for i in range(1, 5):
         figure.add_subplot(2, 4, i)
         plt.title(f'Test Image {i}')
         plt.axis('off')
         plt.imshow(test_image[i, 0, :, :], cmap="gray")
         figure.add_subplot(2, 4, i+4)
-        plt.title(f'Target Image {i}')#    plt.axis('off')
+        plt.title(f'Target Image {i}')
+        plt.axis('off')
         plt.imshow(target_image[i, 0, :, :], cmap="gray")
     plt.show()
-
-
-# In[97]:
-
 
 # Do we have a gpu?
 if FLAG_NOTEBOOK:
@@ -154,9 +139,6 @@ else:
     else:
         device = "cuda"
         logging.info("Using cuda device!")
-
-
-# In[98]:
 
 
 # Lets define our model
@@ -201,7 +183,7 @@ class Decoder(nn.Module):
 
     def crop(self, encoder_features, x):
         # crop the encoder features to match the current dimensions
-        _,_,height,width = x.shape
+        _, _, height, width = x.shape
         encoder_features = CenterCrop([height, width])(encoder_features)
         return encoder_features
 
@@ -241,6 +223,7 @@ class Unet(nn.Module):
         out = self.head(decoder_features)
         return out
 
+# If there is an older model for further training provided, use that; otherwise make a new one
 modelpath = os.path.join(MODEL_FOLDER, args.oldmodelfilename)
 if args.oldmodelepoch > 0 and os.path.isfile(modelpath):
     model = torch.load(modelpath).to(device, non_blocking=True)
@@ -249,10 +232,6 @@ else:
     model = Unet().to(device, non_blocking=True)
 if FLAG_NOTEBOOK:
     print(model)
-
-
-# In[99]:
-
 
 # Test the encoder and decoder definitions
 if FLAG_NOTEBOOK:
@@ -269,14 +248,11 @@ if FLAG_NOTEBOOK:
     print(y.shape)
 
 
-# In[100]:
-
-
 # Training Loops
 def training_loop(dataloader, model, loss_function, optimizer):
     avg_loss, batches = 0, 0
     model.train()
-    for batch, (X,y) in enumerate(dataloader):
+    for batch, (X, y) in enumerate(dataloader):
         X, y = X.float().to(device, non_blocking=True), y.float().to(device, non_blocking=True)
         prediction = model(X)
         loss = loss_function(prediction, y)
@@ -293,10 +269,11 @@ def training_loop(dataloader, model, loss_function, optimizer):
                 logging.info(f"Loss: {current_loss:>7f} [{current_image:>5d}/{len(dataloader.dataset):>5d}]")
 
         avg_loss += current_loss
-        batches +=1
+        batches += 1
         wandb.log({"loss": current_loss, "lr": optimizer.param_groups[0]['lr']})
         if args.upperlr > LEARNING_RATE:
-            optimizer.param_groups[0]['lr'] = LEARNING_RATE+(args.upperlr-LEARNING_RATE)*abs(math.sin(math.pi/46543*batches*BATCH_SIZE/46543))
+            optimizer.param_groups[0]['lr'] = LEARNING_RATE+(args.upperlr-LEARNING_RATE)*abs(math.sin(
+                                                math.pi/46543*batches*BATCH_SIZE/46543))
 
     avg_loss = avg_loss/batches
     return avg_loss
@@ -334,23 +311,20 @@ def validation_loop(dataloader, model, loss_function):
     return loss
 
 
-# In[101]:
-
-
 # Train the network
 torch.cuda.empty_cache()
 optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
 loss_function = nn.MSELoss()
-loss_history = np.zeros((EPOCHS,3,))
+loss_history = np.zeros((EPOCHS, 3,))
 
 while epoch <= EPOCHS:
     if FLAG_NOTEBOOK:
         print(f"Epoch {epoch+1}\n--------------------------")
     else:
         logging.info(f"Epoch {epoch+1}\n--------------------------")
-    loss_history[epoch,0] = epoch+1
-    loss_history[epoch,1] = training_loop(FermiUNLoaderTraining, model, loss_function, optimizer)
-    loss_history[epoch,2] = validation_loop(FermiUNLoaderValidation, model, loss_function)
+    loss_history[epoch, 0] = epoch+1
+    loss_history[epoch, 1] = training_loop(FermiUNLoaderTraining, model, loss_function, optimizer)
+    loss_history[epoch, 2] = validation_loop(FermiUNLoaderValidation, model, loss_function)
     np.save(HISTORY_FILE, loss_history)
 
     torch.save(model, os.path.join(MODEL_FOLDER, f"Model_e{epoch}_{args.runname}.pt"))
@@ -358,10 +332,3 @@ while epoch <= EPOCHS:
 
 test_loop(FermiUNLoaderTesting, model, loss_function)
 logging.info(f"Training complete.")
-
-
-# In[102]:
-
-
-
-
