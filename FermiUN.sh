@@ -45,8 +45,7 @@
 #!/bin/bash
 
 export OMP_NUM_THREADS=4
-module load cuda/11.1.105
-module load cudnn/8.0.5-cuda11.1
-module load anaconda3/2021.05 
-conda activate FermiUNvironment
-python3 ./torchUnet.py
+module load cuda/11.6.0
+module load anaconda3/2022.05 
+conda activate fermiuntorch
+python3 ./torchUnet.py Static5em4from447 0.0005 32 447 OriginalRun/Model_e447.pt 0

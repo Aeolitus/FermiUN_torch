@@ -15,35 +15,56 @@ from torch.utils.data.sampler import SubsetRandomSampler
 from torchvision.transforms import CenterCrop
 import matplotlib.pyplot as plt
 import numpy as np
-
+import wandb
+import argparse
+import math
 
 # In[93]:
+# Arguments Parsing
+parser =argparse.ArgumentParser("TorchUnet")
 
+parser.add_argument("runname", type=str, default="")
+parser.add_argument("learningrate", type=float, default=0.000005)
+parser.add_argument("batchsize", type=int, default=61)
+parser.add_argument("oldmodelepoch", type=int, default=0)
+parser.add_argument("oldmodelfilename", type=str, default='')
+parser.add_argument("upperlr", type=float, default=0)
+args = parser.parse_args()
 
 # Lets define some parameters
-IMAGE_FOLDER = ['..\TestData', '..\TestData2']
-LOG_FILE = '..\log.txt'
-HISTORY_FILE = '..\loss_history.npy'
-MODEL_FOLDER = '..\Models'
+IMAGE_FOLDER = ['../FermiUNData/images_0', '../FermiUNData/images_1', \
+     '../FermiUNData/images_2', '../FermiUNData/images_3', \
+    '../FermiUNData/images_4']
+LOG_FILE = '../log_' + args.runname + '.txt'
+HISTORY_FILE = '../loss_history_' + args.runname + '.npy'
+MODEL_FOLDER = '../Models/' + args.runname
+os.makedirs(MODEL_FOLDER, exist_ok=True)
 
 IMAGE_SIZE = 444
 MASK_RADIUS = 120
 TEST_SPLIT = .15
 VALIDATION_SPLIT = .15
-BATCH_SIZE = 32
+#BATCH_SIZE = 32
+BATCH_SIZE = args.batchsize
 EPOCHS = 1000
-LEARNING_RATE = 5e-6
-FLAG_NOTEBOOK = True
+#LEARNING_RATE = 5e-6
+LEARNING_RATE = args.learningrate
+FLAG_NOTEBOOK = False
 CPU_IN_NOTEBOOK = True
-
+epoch = 0
 
 # In[94]:
 
 
-logging.basicConfig(filename=LOG_FILE, encoding='utf-8', filemode='w', level=logging.DEBUG, format='%(asctime)s > %(levelname)s : %(message)s')
+logging.basicConfig(filename=LOG_FILE, encoding='utf-8', filemode='w', level=logging.WARNING, format='%(asctime)s > %(levelname)s : %(message)s')
 logging.info('FermiUN started!')
-
-
+wandb.init(project="FermiUN Torch Testing")
+wandb.config = {
+    "learning_rate" : LEARNING_RATE,
+    "epochs" : EPOCHS,
+    "batch_size" : BATCH_SIZE
+}
+wandb.run.name = args.runname
 # In[95]:
 
 
@@ -94,11 +115,11 @@ first_split, second_split = int(np.floor(VALIDATION_SPLIT*dataset_size)),       
 validation_indices, train_indices, test_indices = dataset_indices[:first_split],                                                   dataset_indices[first_split:second_split],                                                   dataset_indices[second_split:]
 
 FermiUNLoaderTraining = DataLoader(FermiUNData, batch_size=BATCH_SIZE,
-                                   sampler=SubsetRandomSampler(train_indices))
+                                   sampler=SubsetRandomSampler(train_indices), num_workers=4, pin_memory=True)
 FermiUNLoaderValidation = DataLoader(FermiUNData, batch_size=BATCH_SIZE,
-                                     sampler=SubsetRandomSampler(validation_indices))
+                                     sampler=SubsetRandomSampler(validation_indices), num_workers=4, pin_memory=True)
 FermiUNLoaderTesting = DataLoader(FermiUNData, batch_size=BATCH_SIZE,
-                                  sampler=SubsetRandomSampler(test_indices))
+                                  sampler=SubsetRandomSampler(test_indices), num_workers=4, pin_memory=True)
 
 
 # In[96]:
@@ -151,7 +172,7 @@ class EncoderBlock(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, channels=(1, 16, 32, 64, 128, 256)):
+    def __init__(self, channels=(1, 32, 64, 128, 256, 512)):
         super().__init__()
         self.EncoderBlocks = nn.ModuleList(
             [EncoderBlock(channels[i], channels[i+1])
@@ -168,7 +189,7 @@ class Encoder(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, channels=(256, 128, 64, 32, 16)):
+    def __init__(self, channels=(512, 256, 128, 64, 32)):
         super().__init__()
         self.channels = channels
         self.UpConvolutions = nn.ModuleList(
@@ -207,7 +228,7 @@ class Head(nn.Module):
 
 
 class Unet(nn.Module):
-    def __init__(self, encoder_channels=(1, 16, 32, 64, 128, 256), decoder_channels=(256, 128, 64, 32, 16)):
+    def __init__(self, encoder_channels=(1, 32, 64, 128, 256, 512), decoder_channels=(512, 256, 128, 64, 32)):
         super().__init__()
         self.flatten = nn.Flatten()
         self.encoder = Encoder(encoder_channels)
@@ -220,8 +241,12 @@ class Unet(nn.Module):
         out = self.head(decoder_features)
         return out
 
-
-model = Unet().to(device)
+modelpath = os.path.join(MODEL_FOLDER, args.oldmodelfilename)
+if args.oldmodelepoch > 0 and os.path.isfile(modelpath):
+    model = torch.load(modelpath).to(device, non_blocking=True)
+    epoch = args.oldmodelepoch
+else:
+    model = Unet().to(device, non_blocking=True)
 if FLAG_NOTEBOOK:
     print(model)
 
@@ -250,8 +275,9 @@ if FLAG_NOTEBOOK:
 # Training Loops
 def training_loop(dataloader, model, loss_function, optimizer):
     avg_loss, batches = 0, 0
+    model.train()
     for batch, (X,y) in enumerate(dataloader):
-        X, y = X.float().to(device), y.float().to(device)
+        X, y = X.float().to(device, non_blocking=True), y.float().to(device, non_blocking=True)
         prediction = model(X)
         loss = loss_function(prediction, y)
 
@@ -259,24 +285,31 @@ def training_loop(dataloader, model, loss_function, optimizer):
         loss.backward()
         optimizer.step()
 
+        current_loss, current_image = loss.item(), batch*len(X)
         if batch % 100 == 0:
-            loss, current = loss.item(), batch*len(X)
             if FLAG_NOTEBOOK:
-                print(f"Loss: {loss:>7f} [{current:>5d}/{len(dataloader.dataset):>5d}]")
+                print(f"Loss: {current_loss:>7f} [{current_image:>5d}/{len(dataloader.dataset):>5d}]")
             else:
-                logging.info(f"Loss: {loss:>7f} [{current:>5d}/{len(dataloader.dataset):>5d}]")
-        avg_loss += loss
+                logging.info(f"Loss: {current_loss:>7f} [{current_image:>5d}/{len(dataloader.dataset):>5d}]")
+
+        avg_loss += current_loss
         batches +=1
-    return avg_loss/batches
+        wandb.log({"loss": current_loss, "lr": optimizer.param_groups[0]['lr']})
+        if args.upperlr > LEARNING_RATE:
+            optimizer.param_groups[0]['lr'] = LEARNING_RATE+(args.upperlr-LEARNING_RATE)*abs(math.sin(math.pi/46543*batches*BATCH_SIZE/46543))
+
+    avg_loss = avg_loss/batches
+    return avg_loss
 
 
 def no_inference_loop(dataloader, model, loss_function):
     num_batches = len(dataloader)
     loss = 0
 
+    model.eval()
     with torch.no_grad():
         for X, y in dataloader:
-            X, y = X.float().to(device), y.float().to(device)
+            X, y = X.float().to(device, non_blocking=True), y.float().to(device, non_blocking=True)
             prediction = model(X)
             loss += loss_function(prediction, y).item()
         loss /= num_batches
@@ -306,12 +339,11 @@ def validation_loop(dataloader, model, loss_function):
 
 # Train the network
 torch.cuda.empty_cache()
-loss_function = nn.MSELoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
-
+loss_function = nn.MSELoss()
 loss_history = np.zeros((EPOCHS,3,))
 
-for epoch in range(EPOCHS):
+while epoch <= EPOCHS:
     if FLAG_NOTEBOOK:
         print(f"Epoch {epoch+1}\n--------------------------")
     else:
@@ -321,12 +353,10 @@ for epoch in range(EPOCHS):
     loss_history[epoch,2] = validation_loop(FermiUNLoaderValidation, model, loss_function)
     np.save(HISTORY_FILE, loss_history)
 
-    if epoch > 1 and epoch % 20 == 0:
-        torch.save(model, os.path.join(MODEL_FOLDER, f"Model_e{epoch}.pt"))
+    torch.save(model, os.path.join(MODEL_FOLDER, f"Model_e{epoch}_{args.runname}.pt"))
+    epoch += 1
 
 test_loop(FermiUNLoaderTesting, model, loss_function)
-if EPOCHS % 20 > 0:
-    torch.save(model, os.path.join(MODEL_FOLDER, f"FinishedModel.pt"))
 logging.info(f"Training complete.")
 
 
