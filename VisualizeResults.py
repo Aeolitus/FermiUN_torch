@@ -166,28 +166,16 @@ FermiUNLoaderTesting = DataLoader(FermiUNData, batch_size=BATCH_SIZE,
 model = torch.load(args.modelpath).to("cuda", non_blocking=True)
 model.eval()
 
+
 for batch, (X, y) in enumerate(FermiUNLoaderTesting):
     X, y = X.float().to("cuda", non_blocking=True), y.float().to("cuda", non_blocking=True)
     pred = model(X)
-    for i in range(10):
-        fig = plt.figure()
-        im1_gt = np.squeeze(y[i, :, :].cpu().detach().numpy())
-        im1_pr = np.squeeze(y[i,:,:].cpu().detach().numpy()-pred[i, :, :].cpu().detach().numpy())
-        im1_df = im1_pr-im1_gt
-        fig.add_subplot(1, 3, 1)
-        plt.title("Ground Truth")
-        plt.axis("off")
-        im1 = plt.imshow(im1_gt)
-        vmin, vmax = im1.get_clim()
-        fig.add_subplot(1, 3, 2)
-        plt.title("Prediction")
-        plt.axis("off")
-        plt.imshow(im1_pr, vmin=vmin, vmax=vmax)
-        fig.add_subplot(1, 3, 3)
-        plt.title("Difference")
-        plt.axis("off")
-        plt.imshow(im1_df, vmin=vmin, vmax=vmax)
-        plt.savefig(os.path.join(OUTPUT_DIR, 'Image_' + str(i) + '.png'))
+    Xc = X.cpu().detach().numpy()
+    yc = y.cpu().detach().numpy()
+    pc = pred.cpu().detach().numpy()
+    np.save(os.path.join(OUTPUT_DIR, 'X_' + str(batch) + '.png'), Xc)
+    np.save(os.path.join(OUTPUT_DIR, 'y_' + str(batch) + '.png'), yc)
+    np.save(os.path.join(OUTPUT_DIR, 'p_' + str(batch) + '.png'), pc)
 
 
 

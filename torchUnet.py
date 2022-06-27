@@ -223,6 +223,7 @@ class Unet(nn.Module):
         out = self.head(decoder_features)
         return out
 
+
 # If there is an older model for further training provided, use that; otherwise make a new one
 modelpath = os.path.join(MODEL_FOLDER, args.oldmodelfilename)
 if args.oldmodelepoch > 0 and os.path.isfile(modelpath):
